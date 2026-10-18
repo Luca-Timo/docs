@@ -97,13 +97,7 @@
                   },
                   "event_type": {
                     "type": "string",
-                    "enum": [
-                      "wedding",
-                      "birthday",
-                      "corporate",
-                      "other",
-                      "family"
-                    ]
+                    "description": "Slug of an active event type from the catalog (Settings → Event Types). Defaults on a fresh install: wedding, birthday, corporate, other. GET /api/v1/event-types lists the live values."
                   },
                   "event_date": {
                     "type": "string",
@@ -131,17 +125,117 @@
                   },
                   "require_password": {
                     "type": "boolean",
-                    "default": true
+                    "nullable": true,
+                    "description": "When omitted, falls back to the global event_default_require_password setting."
                   },
                   "password": {
                     "type": "string",
                     "nullable": true,
-                    "description": "Required when require_password is true."
+                    "description": "Required when require_password resolves to true."
                   },
                   "expires_at": {
                     "type": "string",
                     "format": "date-time",
                     "nullable": true
+                  },
+                  "color_theme": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Preset name (e.g. 'default') or JSON-encoded ThemeConfig. Persisted as-is on the event row."
+                  },
+                  "feedback_enabled": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "Enable guest feedback for this gallery. When omitted, falls back to the global event_default_feedback_enabled setting."
+                  },
+                  "enable_devtools_protection": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "Block right-click / devtools shortcuts in the gallery. When omitted, falls back to the global enable_devtools_protection setting."
+                  },
+                  "protection_level": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "basic",
+                      "standard",
+                      "enhanced",
+                      "maximum"
+                    ],
+                    "description": "Image protection level. When omitted, falls back to the global default_protection_level setting."
+                  },
+                  "use_canvas_rendering": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "Render gallery images to a canvas instead of an img tag. When omitted, falls back to the global enable_canvas_rendering setting."
+                  },
+                  "image_quality": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "nullable": true,
+                    "description": "Stored for compatibility only; it does not change how gallery images are encoded. When omitted, the global default_image_quality setting is stored, or 85 if that is unset."
+                  },
+                  "hero_logo_visible": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "Show event logo in the hero block. When omitted, falls back to the global branding_logo_display_hero setting."
+                  },
+                  "hero_logo_size": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "small",
+                      "medium",
+                      "large",
+                      "xlarge"
+                    ],
+                    "description": "Hero logo size. When omitted, falls back to the global branding_logo_size setting."
+                  },
+                  "hero_logo_position": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "top",
+                      "center",
+                      "bottom"
+                    ],
+                    "description": "Hero logo position. Defaults to 'top' (not settings-backed — see migration 084)."
+                  },
+                  "download_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "nullable": true,
+                    "description": "Maximum number of distinct photos the gallery may download. null = unlimited. When omitted, falls back to the global event_default_download_limit setting."
+                  },
+                  "custom_theme_enabled": {
+                    "type": "boolean",
+                    "nullable": true,
+                    "description": "true = the gallery uses its own color_theme / css_template_id; false = it follows the global Branding theme. When omitted, a color_theme or css_template_id sent with the request makes it true (the behaviour before this field existed)."
+                  },
+                  "source_mode": {
+                    "type": "string",
+                    "enum": [
+                      "managed",
+                      "reference"
+                    ],
+                    "default": "managed",
+                    "description": "managed = photos are uploaded to PicPeak; reference = the gallery links the photos in a folder under EXTERNAL_MEDIA_ROOT."
+                  },
+                  "external_path": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Required with source_mode reference. A folder relative to EXTERNAL_MEDIA_ROOT that must exist; the root itself ('', '.') is rejected."
+                  },
+                  "external_watch": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "With source_mode reference: import new files that appear in the folder automatically. Requires the token owner to hold photos.upload (403 otherwise)."
+                  },
+                  "import_now": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "With source_mode reference: start the folder's first import in the background right after the gallery is created. Requires photos.upload (403 otherwise). Progress: GET /api/admin/external-media/events/{id}/status."
                   }
                 }
               }
@@ -175,13 +269,13 @@
             }
           },
           "400": {
-            "description": "Validation error"
+            "description": "Validation error, or an external_path that is missing, the media root itself, or not a folder"
           },
           "401": {
             "description": "Missing/invalid token"
           },
           "403": {
-            "description": "Token lacks admin scope"
+            "description": "Token lacks admin scope, or external_watch / import_now without photos.upload"
           }
         }
       },
@@ -241,6 +335,51 @@
                         },
                         "total": {
                           "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/event-types": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "List active event types",
+        "description": "The slugs accepted as `event_type` when creating events. The catalog is admin-customizable (Settings → Event Types), so integrations should discover values here instead of hardcoding them.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active event types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "eventTypes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "slug_prefix": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          }
                         }
                       }
                     }
@@ -317,6 +456,10 @@
                   "photo": {
                     "type": "string",
                     "format": "binary"
+                  },
+                  "category_id": {
+                    "type": "integer",
+                    "description": "Optional. If provided, the photo is filed under the\ngiven photo_categories.id (must belong to the event\nor be a global category). If omitted, the photo\nlands uncategorized. Since nested folders (migration 265) a folder's id here\nplaces the photo in that folder (its `folder_id`)\nrather than setting `category_id`, which holds filter\ncategories only.\n"
                   }
                 }
               }
@@ -346,6 +489,10 @@
                     },
                     "size_bytes": {
                       "type": "integer"
+                    },
+                    "category_id": {
+                      "type": "integer",
+                      "nullable": true
                     }
                   }
                 }
@@ -354,6 +501,239 @@
           },
           "400": {
             "description": "No file or invalid type"
+          },
+          "404": {
+            "description": "Event not found",
+            "or replaces_photo_id not in this event": null
+          }
+        }
+      },
+      "get": {
+        "summary": "List an event's photos with their proofing marks",
+        "description": "Feeds the Lightroom round-trip (#745): the plugin fetches the photos a client (or the photographer) marked while proofing, matches them to local RAW files by `source_filename`, and applies the stars and colour labels in the catalogue. Also usable for any automation that needs to know what was picked.\n",
+        "tags": [
+          "Photos"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "marked_only",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Only photos carrying a star rating or colour label from `mark_source`."
+          },
+          {
+            "in": "query",
+            "name": "mark_source",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "client",
+                "mine",
+                "either"
+              ],
+              "default": "either"
+            },
+            "description": "Whose marks `marked_only` and the merged `label`/`rating` fields reflect. `mine` is the calling token owner's own triage.\n"
+          },
+          {
+            "in": "query",
+            "name": "color_labels",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated client colours, e.g. `green,yellow`."
+          },
+          {
+            "in": "query",
+            "name": "my_color_labels",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated colours from the token owner's own marks."
+          },
+          {
+            "in": "query",
+            "name": "min_rating",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5
+            }
+          },
+          {
+            "in": "query",
+            "name": "my_min_rating",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
+          },
+          {
+            "in": "query",
+            "name": "logic",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AND",
+                "OR"
+              ],
+              "default": "AND"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Photos with feedback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "photos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer"
+                          },
+                          "filename": {
+                            "type": "string"
+                          },
+                          "original_filename": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "source_filename": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Camera-original name, preserved across replaces. Match on this."
+                          },
+                          "average_rating": {
+                            "type": "number"
+                          },
+                          "feedback_count": {
+                            "type": "integer"
+                          },
+                          "like_count": {
+                            "type": "integer"
+                          },
+                          "favorite_count": {
+                            "type": "integer"
+                          },
+                          "comment_count": {
+                            "type": "integer"
+                          },
+                          "color_labels": {
+                            "type": "object",
+                            "description": "Per-colour tallies across guests, keyed by colour — for example a green count of 2 and a red count of 1. Braces are spelled out here on purpose: an inline JSON example in an unquoted YAML scalar parses as a flow mapping and swagger-jsdoc drops the whole route.\n"
+                          },
+                          "dominant_color_label": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "my_rating": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "my_color_label": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "color_label": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Merged colour for `mark_source`. What a client should apply."
+                          },
+                          "rating": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "Merged 0-5 rating for `mark_source`."
+                          },
+                          "size_bytes": {
+                            "type": "integer",
+                            "nullable": true,
+                            "description": "Recorded size of the stored original. Null means UNKNOWN, not zero — such a row is still sized from storage and still counts against the ZIP size cap, so do not sum these to predict it.\n"
+                          },
+                          "media_type": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "`image` or `video`. A video is never resized by `resolution`."
+                          },
+                          "mime_type": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "processing_status": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "`complete` unless the async worker is still on this photo. The preview and download routes answer 503 or 422 for the other states, so a client can poll instead of failing.\n"
+                          }
+                        }
+                      }
+                    },
+                    "pagination": {
+                      "type": "object",
+                      "properties": {
+                        "page": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "filtered": {
+                          "type": "integer"
+                        },
+                        "pages": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token lacks scope or permission"
           },
           "404": {
             "description": "Event not found"
@@ -407,6 +787,306 @@
           },
           "404": {
             "description": "Not found"
+          }
+        }
+      }
+    },
+    "/events/{id}/photos/download": {
+      "get": {
+        "summary": "Download an event's originals as a ZIP",
+        "description": "Streams a ZIP of the stored originals (photos and videos), or of resized renditions of them with `resolution`. Never watermarked, whatever the gallery's watermark setting says. Entries are stored uncompressed and always named by the original upload filename, independent of the \"use original filenames\" setting; `:` becomes `_`, and duplicates (compared case-insensitively) get `_1`, `_2` … suffixes. A photo whose file is missing is skipped and listed by id in a `MISSING_FILES.txt` entry (`MISSING_FILES_1.txt` if a photo already uses that name). Accepts the same filters as the photo list, plus `ids`. Not counted as a gallery download. Requires the `read` scope and the owner's `photos.view` and `photos.download` permissions.\n\nThe archive is streamed without a Content-Length. Archives over 4 GiB are written as ZIP64, which some streaming unzip tools cannot read; use a tool that reads the central directory (unzip 6, 7-Zip, Python zipfile) or split the request with `ids`. If a stored file fails to read after streaming has started, the connection is aborted rather than ended, so a truncated archive never arrives as a complete response; treat an incomplete transfer as a failure and retry.\n\nHEAD is a cheap probe: it runs the filter, id and count checks and the byte check on recorded sizes, then answers with the ZIP headers without loading rows, statting files or building the archive. Rows without a recorded size are only sized on GET, so a HEAD can answer 200 where the GET refuses with ZIP_TOO_LARGE; the GET also enforces the byte cap on the bytes actually streamed. At most 2 archives per token are built at once; another GET meanwhile gets 429 ZIP_CONCURRENCY.\n\nEvery request counts against the general API rate limit (default 300 requests per 15 minutes per client IP, Settings → Security → API rate limiting). For bulk delivery use this endpoint, or `ids` batches of up to 500, rather than one single-photo request per photo.\n",
+        "tags": [
+          "Photos"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "schema": {
+              "type": "string",
+              "default": "original"
+            },
+            "description": "`original` (the default) packs the stored bytes. `WxH` — for example `2048x2048` — packs renditions resized into that box instead, keeping the aspect ratio and never enlarging, and names the archive after the box rather than `-originals`. Only JPEG, PNG, WebP and GIF are resized — videos, RAW and HEIC/HEIF are always packed at original size, and the same \"box is a maximum, not a guarantee\" caveat as the single-photo route applies to every entry. Renditions are rendered one at a time as the archive streams, so a large resized archive takes noticeably longer to produce than the same archive of originals. The size caps are measured against the ORIGINALS, which for a resized archive is an upper bound — a request can be refused as too large although its renditions would have fitted.\n\nFailure handling differs from the originals path on purpose. A storage read that fails mid-archive aborts the connection, so a truncated ZIP never arrives as a complete 200. A photo that fails to RENDER does not: it is skipped, listed in `MISSING_FILES.txt` and the archive still ends 200, because one undecodable file should not cost an integration the other 499. Read the manifest and re-request the ids in it rather than assuming a 200 means every id arrived.\n"
+          },
+          {
+            "in": "query",
+            "name": "ids",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated photo ids of this event, at most 500. Every id must belong to the event."
+          },
+          {
+            "in": "query",
+            "name": "marked_only",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mark_source",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "client",
+                "mine",
+                "either"
+              ],
+              "default": "either"
+            }
+          },
+          {
+            "in": "query",
+            "name": "color_labels",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "my_color_labels",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_rating",
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5
+            }
+          },
+          {
+            "in": "query",
+            "name": "my_min_rating",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
+          },
+          {
+            "in": "query",
+            "name": "logic",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "AND",
+                "OR"
+              ],
+              "default": "AND"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ZIP archive of the originals",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filter or ids (code INVALID_PHOTO_IDS, TOO_MANY_PHOTO_IDS), or over 5000 photos / 20 GiB (code ZIP_TOO_LARGE)"
+          },
+          "401": {
+            "description": "Missing",
+            "invalid": null,
+            "revoked or expired token": null
+          },
+          "403": {
+            "description": "Token lacks scope or permission",
+            "or the event belongs to another admin": null
+          },
+          "404": {
+            "description": "Event not found",
+            "or no photos match (code NO_PHOTOS)": null
+          },
+          "409": {
+            "description": "Event is archived (code EVENT_ARCHIVED)"
+          },
+          "429": {
+            "description": "Rate limit exceeded, or this token already has 2 archives in progress (code ZIP_CONCURRENCY)"
+          },
+          "500": {
+            "description": "The archive could not be started. A failure after streaming started aborts the connection instead."
+          }
+        }
+      }
+    },
+    "/events/{id}/photos/{photoId}/download": {
+      "get": {
+        "summary": "Download one original photo or video",
+        "description": "Streams the stored original exactly as uploaded, or a resized rendition of it with `resolution`. Never watermarked, whatever the gallery's watermark setting says. The filename in Content-Disposition is always the original upload name (RFC 5987 encoded), independent of the \"use original filenames\" setting. HEAD answers the same headers without reading the file — including Content-Length, except when `resolution` asks for a rendition, whose length is only known once it has been rendered. Range requests are not supported. Not counted as a gallery download. Requires the `read` scope and the owner's `photos.view` and `photos.download` permissions.\n\nEvery request counts against the general API rate limit (default 300 requests per 15 minutes per client IP, Settings → Security → API rate limiting). To deliver a whole event, use the ZIP endpoint (optionally in `ids` batches) instead of one request per photo.\n",
+        "tags": [
+          "Photos"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "photoId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resolution",
+            "schema": {
+              "type": "string",
+              "default": "original"
+            },
+            "description": "`original` (the default) serves the stored bytes. `WxH` — for example `2048x2048` — resizes into that box instead, keeping the aspect ratio, never enlarging, and re-encoding in the source format. These are the same resolution ids the gallery's own download menu uses. Only JPEG, PNG, WebP and GIF are resized — videos, RAW (e.g. DNG) and HEIC/HEIF are always served at original size, because re-encoding them would ship bytes that disagree with their filename and Content-Type. A photo already inside the box is returned byte-for-byte rather than re-encoded. A rendition is never watermarked, whatever the gallery's watermark setting says.\n\nThe box is a maximum, not a guarantee. A rendition is skipped and the stored bytes are served unchanged when the image cannot be re-encoded safely: HEIC/HEIF detected from the BYTES (the stored type is not always right about that), and a source sharp cannot decode. In each case the response is the correct bytes under the correct type, but larger than asked for, so a client that must not exceed a size should check what it received.\n"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The original file",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing",
+            "invalid": null,
+            "revoked or expired token": null
+          },
+          "403": {
+            "description": "Token lacks scope or permission",
+            "or the event belongs to another admin": null
+          },
+          "404": {
+            "description": "Event or photo not found (a photo of another event is not found either), or the file is missing from storage (code PHOTO_FILE_MISSING)"
+          },
+          "409": {
+            "description": "Event is archived (code EVENT_ARCHIVED)"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        }
+      }
+    },
+    "/events/{id}/photos/{photoId}/preview": {
+      "get": {
+        "summary": "A photo's web-sized preview image",
+        "description": "The same JPEG preview tier the admin gallery grid renders, for building a picker without pulling originals. Generated on first request and cached in storage afterwards.\n\nNot a download: it is never the stored original, it carries no Content-Disposition, and it is left out of the download audit log and the notification bell — browsing a gallery is not delivering it. Requires the `read` scope and the owner's `photos.view` permission.\n\nVideos have no preview and answer 404 `PREVIEW_UNAVAILABLE` — ask for one per row in a listing and the video rows simply come back empty, they are never generated on demand.\n\n`w` must be exactly one of the generated tiers (640, 1280 or 1920); any other value, including a non-numeric one, is ignored and the default preview is served, so read the returned image's own width rather than assuming `w` was honoured. The preview is JPEG, or WebP when the source is animated or carries an alpha channel — read the Content-Type. A photo still being processed answers 503 with `Retry-After`, and one whose processing failed answers 422 — poll rather than treating either as fatal.\n",
+        "tags": [
+          "Photos"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "photoId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "w",
+            "schema": {
+              "type": "integer",
+              "enum": [
+                640,
+                1280,
+                1920
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The preview image",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token lacks scope or permission"
+          },
+          "404": {
+            "description": "Event or photo not found",
+            "or no preview exists for it (including every video)": null
+          },
+          "409": {
+            "description": "The event is archived"
+          },
+          "422": {
+            "description": "Processing this photo failed"
+          },
+          "503": {
+            "description": "Still processing; retry after the given delay"
           }
         }
       }
